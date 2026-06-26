@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+*.tsbuildinfo
+
+# Runtime output / uploads
+data/uploads/
+data/heatmaps/
+
+# Local datasets & model experiments (not tracked in the repo)
+data/raw/
+data/synthetic*/
+data/yolo_*/
+data/api_fixtures/
+data/models/*.bak/
+data/models/*.prev/
+data/models/*.pre-*/
+data/models/*-prev/
+data/models/yolo_runs/
+
+# Transfer / deployment artifacts
+*.tar
+*.tar.gz
+*.zip
+TrustLens-CPU/

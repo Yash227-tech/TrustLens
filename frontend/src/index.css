@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ===== LIGHT THEME (mockup #2 — white + VIOLET accent) ===== */
+  :root {
+    --background: 210 40% 98%;        /* near-white */
+    --foreground: 222 47% 11%;        /* slate-900 text */
+    --card: 0 0% 100%;                /* white cards */
+    --card-foreground: 222 47% 11%;
+    --primary: 262 83% 58%;           /* violet-600 (#7C3AED) buttons/active */
+    --primary-foreground: 0 0% 100%;  /* white text on violet */
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 258 60% 96%;            /* faint violet hover surface */
+    --accent-foreground: 262 83% 40%;
+    --success: 160 84% 39%;           /* green badge */
+    --warning: 38 92% 50%;            /* amber badge */
+    --danger: 0 84% 60%;              /* red badge */
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 262 83% 58%;
+    --radius: 1rem;                   /* 16px corners */
+  }
+
+  /* ===== DARK THEME (mockup #3 — near-black + NEON GREEN glow) ===== */
+  .dark {
+    --background: 156 28% 5%;         /* very dark green-black */
+    --foreground: 150 30% 96%;        /* near-white, faint green */
+    --card: 156 22% 9%;               /* dark green glass */
+    --card-foreground: 150 30% 96%;
+    --primary: 158 84% 49%;           /* neon green/mint (#10E89C) */
+    --primary-foreground: 158 60% 7%; /* near-black text on neon green */
+    --secondary: 156 18% 14%;
+    --secondary-foreground: 150 30% 96%;
+    --muted: 156 16% 13%;
+    --muted-foreground: 150 12% 64%;  /* green-grey */
+    --accent: 156 22% 14%;            /* green-tinted hover surface */
+    --accent-foreground: 150 30% 96%;
+    --success: 158 84% 49%;           /* neon green */
+    --warning: 38 92% 55%;
+    --danger: 0 84% 62%;
+    --border: 156 20% 18%;
+    --input: 156 20% 18%;
+    --ring: 158 84% 49%;
+  }
+
+  * { @apply border-border; }
+
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* Frosted-glass surface used by Card */
+  .glass {
+    @apply border bg-card/80 backdrop-blur-xl shadow-glass;
+  }
+}

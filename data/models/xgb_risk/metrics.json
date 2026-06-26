@@ -1,0 +1,1 @@
+{"accuracy": 0.884, "roc_auc": 0.9495262828836627, "tamper_recall": 0.9163179916317992, "clean_recall": 0.8544061302681992, "scale_pos_weight": 1.09}
