@@ -73,6 +73,22 @@ def _signal(name: str, score: float, passed: bool, detail: str) -> dict:
     return {"name": name, "score": score, "passed": passed, "detail": detail}
 
 
+# Document types that are ALWAYS system-generated (payroll / bank / government
+# portals) and must never arrive edited in office software — for these an office-
+# editor "edit fingerprint" is a hard fraud critical (RED). Every other doc type is
+# commonly authored/edited in office software, so the same fingerprint is routed to
+# a YELLOW review instead (it cannot tell a benign edit from a fraudulent one).
+STRICT_EDIT_DOC_TYPES = {
+    "salary_slip", "bank_statement", "form_16", "itr_v", "itr_full",
+    "gstr_1", "gstr_3b",
+}
+# When a critical forgery indicator forces RED, the DISPLAYED Trust Score must be
+# consistent with that verdict (a critical is a deterministic forgery signal). The
+# XGBoost score is a separate pixel/structural-cleanliness axis and can stay high for
+# a metadata/font-only tamper, producing a confusing "RED · 100" — so we cap it.
+CRITICAL_SCORE_CAP = 10
+
+
 def _collect_critical_indicators(
     pdf_result: dict | None,
     docx_result: dict | None,
@@ -85,6 +101,7 @@ def _collect_critical_indicators(
     cs_result: dict | None = None,
     aadhaar_result: dict | None = None,
     is_scanned_pdf: bool = False,
+    doc_type: str | None = None,
 ) -> list[str]:
     """See spec §7: RED is triggered by Trust <50 OR critical forgery indicators."""
     indicators: list[str] = []
@@ -110,13 +127,17 @@ def _collect_critical_indicators(
         if len(dflags) >= 3 and not indicators:
             indicators.append(f"DOCX metadata: {len(dflags)} concurrent flags")
 
-    if font_result is not None:
+    # Font subset-duplication is the office-editor "edit fingerprint" (the same font
+    # kept twice after an edit-and-resave). It is a HARD critical (RED) ONLY for doc
+    # types that are always system-generated and must never be office-edited
+    # (STRICT_EDIT_DOC_TYPES). For everyday doc types that people legitimately author
+    # and edit in office software, the same fingerprint cannot distinguish a benign
+    # edit from a fraudulent one, so run_full_analysis routes it to a YELLOW review
+    # instead — bank-safe (review, never auto-reject a genuine document). Legitimate
+    # PDF generators (wkhtmltopdf ITR-V, pdfmake GSTR) also split fonts into subsets,
+    # but they are not office-editor producers, so they never reach here.
+    if font_result is not None and doc_type in STRICT_EDIT_DOC_TYPES:
         fflags = font_result.get("flags", [])
-        # Font subset-duplication is the "Word-edit fingerprint" ONLY when an office
-        # editor produced the file. Legitimate PDF generators split the same font
-        # into subset tags as a normal artifact — wkhtmltopdf (the IT-portal ITR-V),
-        # pdfmake (GSTR), etc. So require an office-editor producer to corroborate;
-        # otherwise it's benign generation, surfaced as review (not a RED critical).
         office_edited = bool(pdf_result) and any(
             f.startswith("office_editor") for f in pdf_result.get("flags", []))
         if office_edited and any(f.startswith("excessive_subsets") for f in fflags):
@@ -538,6 +559,7 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
     criticals = _collect_critical_indicators(
         pdf_result, docx_result, ela_result, mt_result, font_result, sig_result, stamp_result,
         bank_result, cs_result, aadhaar_result, is_scanned_pdf,
+        doc_type=classification["doc_type"],
     )
     # A confident, localized photo-region splice is photo substitution → RED (the
     # ManTraNet whole-image average can dilute a small photo edit below its own
@@ -546,6 +568,11 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
         criticals.append("Photo region manipulation — " + photo_forensic["detail"])
     if criticals and tier != "RED":
         tier, routing = "RED", "fraud_escalation"
+    # Keep the displayed Trust Score consistent with a forced-RED critical so the
+    # UI never shows a contradictory "RED · 100" (a critical is a deterministic
+    # forgery indicator; the XGBoost score is a separate cleanliness axis).
+    if criticals:
+        trust_score = min(trust_score, CRITICAL_SCORE_CAP)
 
     # Review signals are INFORMATIONAL only — they surface benign-on-real-docs
     # artifacts (scan/logo/stamp/signature ELA spikes, PDF-generator font subsets)
@@ -577,6 +604,24 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
         hard_fail = [s for s in signals
                      if s["score"] < 0.7 and s["name"] not in REVIEW_SIGNAL_NAMES]
         if not hard_fail:
+            tier, routing = "YELLOW", "underwriter_review"
+
+    # Office-editor "edit fingerprint" on an everyday (non-system-generated) doc type
+    # routes to human REVIEW (YELLOW), not auto-reject (RED): for documents people
+    # legitimately author/edit in Word/LibreOffice it cannot tell a benign edit from a
+    # fraudulent one. Strict system-generated types already became a RED critical.
+    edit_fingerprint = (
+        pdf_result is not None
+        and any(f.startswith("office_editor") for f in pdf_result.get("flags", []))
+        and font_result is not None
+        and any(f.startswith(("subset_duplication", "excessive_subsets"))
+                for f in font_result.get("flags", []))
+    )
+    if edit_fingerprint and classification["doc_type"] not in STRICT_EDIT_DOC_TYPES:
+        review_indicators.append(
+            "Document appears edited in office software (Word/LibreOffice) — verify it "
+            "is the original, not a re-saved/edited copy (review)")
+        if tier == "GREEN":
             tier, routing = "YELLOW", "underwriter_review"
 
     # Classifier disagreement (keyword vs a CONFIDENT LayoutLMv3) — surfaced as an
