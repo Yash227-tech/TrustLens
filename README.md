@@ -17,15 +17,16 @@ heatmap**, an **explainable evidence report**, and **risk-tiered routing
 
 ```
 Upload (PDF / DOCX / image)
-  → OCR + Auto-Classification (Tesseract 5 + keyword + fine-tuned LayoutLMv3)
+  → OCR + Auto-Classification (Tesseract 5 [en+hi+gu] + keyword + fine-tuned LayoutLMv3, 26 types)
   → Forensic Engine
         • PDF metadata analysis        • Font & spacing forensics
         • Error Level Analysis (ELA)   • Signature-region analysis (ELA)
         • Copy-move/splicing (ManTraNet CNN)
         • Stamp authentication (YOLOv8 + SIFT/ORB + edge-sharpness)
+        • Photo-region tamper (ManTraNet ∩ ID photo box)  • Udyam QR authentication
   → Financial Analyzer (bank-statement rules, Pandas)
-  → Cross-Source Verification (mock DigiLocker / AA / GSTN / IT e-Filing)
-  → NLP entity extraction (regex IDs + en_core_web_trf NER microservice)
+  → Cross-Source Verification (mock DigiLocker / AA / GSTN / IT e-Filing / Udyam)
+  → NLP entity extraction (regex IDs + Verhoeff + en_core_web_trf NER microservice)
   → Risk Scoring (XGBoost + SHAP explainability)
   → LLM Evidence Report (LangChain + local Llama 3.1 8B, strict grounding)
   → Risk-Tiered Routing (Green / Yellow / Red)
@@ -34,7 +35,12 @@ Upload (PDF / DOCX / image)
 
 Multi-document **cases** additionally run **cross-document consistency**: the same
 applicant's PAN / name / GSTIN / account is matched across every document
-(phonetic + fuzzy matching for Indian names).
+(phonetic + fuzzy matching for Indian names), plus **cross-document face-match**
+(FaceNet) to catch a mixed-identity or swapped ID photo.
+
+A reproducible **evaluation benchmark** (`data/benchmark.py`) and an
+**active-learning flywheel** (analyst genuine/fraud labels → `ml/training/collect_labeled.py`
+→ retraining) round out the system. See **`MODEL_CARD.md`** for full metrics.
 
 ---
 
@@ -68,20 +74,27 @@ ManTraNet ✅ · YOLOv8 ✅ · spaCy ✅ · Sentence-Transformers ✅ (installed
 
 | Model | Task | Result |
 |---|---|---|
-| LayoutLMv3 (fine-tuned) | 23-class doc classification | 100% val acc (synthetic) |
-| YOLOv8n | stamp/seal detection | mAP50 0.995 |
-| XGBoost + SHAP | Trust Score from forensic features | 84% acc, 0.937 ROC-AUC (real CASIA + synthetic) |
-| ManTraNet | copy-move/splicing | pretrained (Wu et al., CVPR 2019) weights |
+| LayoutLMv3 (fine-tuned) | **26-class** doc classification | **99.3% val · 97.9% real held-out** |
+| XGBoost + SHAP | Trust Score from 7 forensic features | **88% acc · 0.95 ROC-AUC · 91.6% tamper-recall** (real CASIA + payslip + synthetic) |
+| YOLOv8 ×5 | stamp / Aadhaar / PAN / signature / utility detection | stamps mAP50 **0.995**, Aadhaar mAP **0.93** |
+| ManTraNet | copy-move/splicing localisation | pretrained (Wu et al., CVPR 2019); pixel-AUC 0.76–0.88 on Indian-doc tamper set |
+| Photo-region forensics | single-doc ID photo-swap | **96% recall · 0% false-positive** |
+| FaceNet / MTCNN | cross-document face match | 96% genuine match · 78% impostor caught |
+
+Full benchmark (332 docs, 4 fraud vectors): **98.6% fraud hard-catch**. See `MODEL_CARD.md`.
 
 ---
 
-## 4. Document scope (spec §4) — 23 types
+## 4. Document scope (spec §4) — 26 types
 
-**Legal (12):** loan agreement, sanction letter, NOC, board resolution, partnership
-deed, MOA/AOA, power of attorney, indemnity bond, guarantee letter, Aadhaar, PAN, passport.
+**Legal (13):** loan agreement, sanction letter, NOC, board resolution, partnership
+deed, MOA/AOA, power of attorney, indemnity bond, guarantee letter, **rental/lease
+agreement**, Aadhaar, PAN, passport.
 
 **Financial (11):** bank statement, salary slip, Form 16, ITR-V, full ITR, GSTR-1,
 GSTR-3B, balance sheet, profit & loss, audited financials, cash flow statement.
+
+**KYC / MSME (2):** **Udyam (MSME) certificate** (with QR authentication), **utility bill** (water / gas / electricity).
 
 ---
 
@@ -94,8 +107,9 @@ GSTR-3B, balance sheet, profit & loss, audited financials, cash flow statement.
 | 🔴 RED | Trust < 50 **OR** any critical forgery indicator | Fraud escalation |
 
 **Critical indicators** force RED regardless of score (spec §7): suspicious-tool /
-office-editor producer, font subset duplication, ELA heavy noise, ManTraNet strong
-forgery, stamp reuse, bank running-balance break, and cross-source name mismatch.
+office-editor producer, font subset duplication, ManTraNet strong forgery, stamp
+reuse, bank running-balance break, cross-source name mismatch, **photo-region
+manipulation**, and a **fabricated Aadhaar** (fails the UIDAI Verhoeff checksum).
 
 ---
 
@@ -107,9 +121,9 @@ Prerequisites: Docker Desktop (with GPU support), Node.js, an NVIDIA GPU, and
 ### Clone (with model weights)
 ```bash
 git lfs install
-git clone https://github.com/<your-username>/<repo>.git
-cd <repo>
-git lfs pull   # downloads the LayoutLMv3 / YOLOv8 / ManTraNet weights
+git clone https://github.com/Yash227-tech/TrustLens.git
+cd TrustLens
+git lfs pull   # downloads the LayoutLMv3 / YOLOv8 / ManTraNet weights (~1 GB)
 ```
 
 > **No NVIDIA GPU?** Remove the three `deploy:` blocks (under `ollama`, `worker`,

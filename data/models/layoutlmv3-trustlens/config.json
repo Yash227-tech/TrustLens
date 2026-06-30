@@ -35,8 +35,11 @@
     "18": "passport",
     "19": "power_of_attorney",
     "20": "profit_and_loss",
-    "21": "salary_slip",
-    "22": "sanction_letter"
+    "21": "rental_agreement",
+    "22": "salary_slip",
+    "23": "sanction_letter",
+    "24": "udyam_certificate",
+    "25": "utility_bill"
   },
   "initializer_range": 0.02,
   "input_size": 224,
@@ -63,8 +66,11 @@
     "passport": 18,
     "power_of_attorney": 19,
     "profit_and_loss": 20,
-    "salary_slip": 21,
-    "sanction_letter": 22
+    "rental_agreement": 21,
+    "salary_slip": 22,
+    "sanction_letter": 23,
+    "udyam_certificate": 24,
+    "utility_bill": 25
   },
   "layer_norm_eps": 1e-05,
   "max_2d_position_embeddings": 1024,
