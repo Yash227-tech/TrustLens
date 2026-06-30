@@ -1,0 +1,156 @@
+# CPU-only variant of docker-compose.yml — for machines WITHOUT an NVIDIA GPU.
+# Identical to docker-compose.yml except the three `deploy:` GPU-reservation blocks
+# (ollama / worker / backend) are removed, so Docker won't refuse to start on a
+# GPU-less host. The app code auto-falls back to CPU (same results, just slower).
+#
+# Run:  docker compose -f docker-compose.cpu.yml up -d --build
+# Ollama (the local LLM evidence report) is heavy on CPU — on a small box, skip the
+# `ollama pull` step and reports fall back to a template (Trust Score/tier unaffected).
+name: trustlens
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: trustlens-postgres
+    environment:
+      POSTGRES_USER: trustlens
+      POSTGRES_PASSWORD: trustlens_dev
+      POSTGRES_DB: trustlens
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trustlens"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: trustlens-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: trustlens-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: trustlens
+      MINIO_ROOT_PASSWORD: trustlens_dev
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: trustlens-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+  gov-mock:
+    build:
+      context: ./gov_mock
+    container_name: trustlens-gov-mock
+    ports:
+      - "8600:8600"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8600/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  ner:
+    build:
+      context: ./ner_service
+    container_name: trustlens-ner
+    ports:
+      - "8500:8500"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8500/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  worker:
+    build:
+      context: ./backend
+    container_name: trustlens-worker
+    shm_size: "2gb"
+    command: celery -A app.celery_app worker --loglevel=info --pool=threads --concurrency=2
+    environment:
+      DATABASE_URL: postgresql+asyncpg://trustlens:trustlens_dev@postgres:5432/trustlens
+      REDIS_URL: redis://redis:6379/0
+      NER_URL: http://ner:8500/ner
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1:8b
+      GOV_MOCK_URL: http://gov-mock:8600
+    volumes:
+      - ./backend/app:/app/app
+      - ./data:/data
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    container_name: trustlens-backend
+    shm_size: "2gb"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://trustlens:trustlens_dev@postgres:5432/trustlens
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: trustlens
+      MINIO_SECRET_KEY: trustlens_dev
+      MINIO_BUCKET: documents
+      NER_URL: http://ner:8500/ner
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1:8b
+      GOV_MOCK_URL: http://gov-mock:8600
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./data:/data
+      - ./ml:/ml
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  hf_cache:
+  ollama_models:
