@@ -82,11 +82,13 @@ STRICT_EDIT_DOC_TYPES = {
     "salary_slip", "bank_statement", "form_16", "itr_v", "itr_full",
     "gstr_1", "gstr_3b",
 }
-# When a critical forgery indicator forces RED, the DISPLAYED Trust Score must be
-# consistent with that verdict (a critical is a deterministic forgery signal). The
-# XGBoost score is a separate pixel/structural-cleanliness axis and can stay high for
-# a metadata/font-only tamper, producing a confusing "RED · 100" — so we cap it.
-CRITICAL_SCORE_CAP = 10
+# When a critical forgery indicator forces RED, the DISPLAYED Trust Score is forced
+# into a low RED band so the UI never shows a contradictory "RED · 100" (a critical
+# is a deterministic forgery signal; the XGBoost score is a separate cleanliness
+# axis). GRADED, not a flat number: the model's own read is scaled into ~0-20 and
+# lowered ~5 per ADDITIONAL independent forgery indicator, so a multi-flag forgery
+# scores lower than a single-flag one. CRITICAL_SCORE_BAND = top of that band.
+CRITICAL_SCORE_BAND = 20
 
 
 def _collect_critical_indicators(
@@ -568,11 +570,11 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
         criticals.append("Photo region manipulation — " + photo_forensic["detail"])
     if criticals and tier != "RED":
         tier, routing = "RED", "fraud_escalation"
-    # Keep the displayed Trust Score consistent with a forced-RED critical so the
-    # UI never shows a contradictory "RED · 100" (a critical is a deterministic
-    # forgery indicator; the XGBoost score is a separate cleanliness axis).
+    # Force the displayed Trust Score into a low RED band (graded by the model's read
+    # and the number of forgery indicators) so the UI never shows "RED · 100".
     if criticals:
-        trust_score = min(trust_score, CRITICAL_SCORE_CAP)
+        graded = round(trust_score * CRITICAL_SCORE_BAND / 100) - 5 * (len(criticals) - 1)
+        trust_score = max(1, min(trust_score, graded))
 
     # Review signals are INFORMATIONAL only — they surface benign-on-real-docs
     # artifacts (scan/logo/stamp/signature ELA spikes, PDF-generator font subsets)
