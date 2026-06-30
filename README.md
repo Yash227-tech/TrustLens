@@ -13,6 +13,12 @@ heatmap**, an **explainable evidence report**, and **risk-tiered routing
 
 ---
 
+## 🎥 Demo Video
+
+**[▶ Watch the full TrustLens demo](https://drive.google.com/file/d/1qiS5h3VaQs58DjHUzyMB0yCzIPsfNioY/view?usp=sharing)** — end-to-end walkthrough: document upload, live analysis (Trust Score, WHY/SHAP explainability, anomaly heatmap), multi-document case creation, and the append-only audit log.
+
+---
+
 ## 1. What it does (pipeline)
 
 ```
