@@ -67,6 +67,7 @@ def analyze_cross_source(entities: dict[str, list[str]], doc_type: str | None) -
         }
 
     doc_names = entities.get("person", [])
+    org_names = entities.get("org", [])  # enterprise/legal names (for Udyam/GSTN)
 
     # Deterministic offline check: any extracted Aadhaar that matches the format
     # but fails the Verhoeff checksum is fabricated (no genuine UIDAI number can).
@@ -88,6 +89,8 @@ def analyze_cross_source(entities: dict[str, list[str]], doc_type: str | None) -
         if entities.get("pan"):
             payload["pan"] = entities["pan"][0]
         calls.append(("Income Tax e-Filing", "/itr/verify", payload))
+    for urn in entities.get("udyam", [])[:1]:  # Udyam (MSME) registry
+        calls.append(("Udyam", "/udyam/verify", {"urn": urn}))
 
     if not calls:
         return {
@@ -111,11 +114,14 @@ def analyze_cross_source(entities: dict[str, list[str]], doc_type: str | None) -
             checks.append({"source": source, "result": "not_found"})
             continue
         auth_name = resp.get("authoritative_name", "")
-        # Compare authoritative name to any name on the document.
-        if doc_names and not any(_name_matches(auth_name, dn) for dn in doc_names):
+        # Udyam/GSTN are business records → compare against the ENTERPRISE name on
+        # the doc (org), not the person; fall back to person if no org was found.
+        compare_to = (org_names or doc_names) if source in ("Udyam", "GSTN") else doc_names
+        # Compare authoritative name to the relevant name(s) on the document.
+        if compare_to and not any(_name_matches(auth_name, dn) for dn in compare_to):
             mismatched += 1
             checks.append({"source": source, "result": "mismatch",
-                           "authoritative_name": auth_name, "doc_names": doc_names})
+                           "authoritative_name": auth_name, "doc_names": compare_to})
             flags.append(f"{source}_name_mismatch(auth='{auth_name}')")
         else:
             verified += 1

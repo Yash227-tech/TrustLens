@@ -29,6 +29,8 @@ PAN_RE = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
 GSTIN_RE = re.compile(r"\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]\b")
 AADHAAR_RE = re.compile(r"\b[2-9][0-9]{3}\s?[0-9]{4}\s?[0-9]{4}\b")
 IFSC_RE = re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")
+# Udyam Registration Number: UDYAM-<2-letter state>-<2 digit>-<7 digit>.
+UDYAM_RE = re.compile(r"\bUDYAM-[A-Z]{2}-\d{2}-\d{7}\b", re.IGNORECASE)
 ACCOUNT_RE = re.compile(r"\b\d{11,18}\b")
 # Amounts like Rs. 1,50,000 or ₹50,000.00 or INR 12345
 AMOUNT_RE = re.compile(r"(?:Rs\.?|₹|INR)\s?[\d,]+(?:\.\d{1,2})?", re.IGNORECASE)
@@ -138,24 +140,28 @@ def _parse_mrz(text: str) -> tuple[set[str], set[str]]:
     return numbers, names
 
 
-def _regex_entities(text: str) -> dict[str, list[str]]:
+def _regex_entities(text: str, doc_type: str | None = None) -> dict[str, list[str]]:
     pans = sorted(set(PAN_RE.findall(text)))
     gstins = sorted(set(GSTIN_RE.findall(text)))
-    # Aadhaar: only treat a 12-digit number as Aadhaar when it is GROUPED
-    # (XXXX XXXX XXXX) or appears near an Aadhaar/UIDAI label. A bare 12-digit run
-    # elsewhere is almost always an account number — checking ITS Verhoeff would
-    # falsely flag genuine ITR / bank / loan docs as "fabricated Aadhaar". Real
-    # Aadhaar cards print the number grouped and/or under the UIDAI label, so
-    # genuinely fabricated Aadhaar numbers are still caught.
+    # Aadhaar: a 12-digit number is only an Aadhaar when an Aadhaar/UIDAI label is
+    # near it, OR the document itself is an Aadhaar card (doc_type=="aadhaar").
+    # GROUPING ALONE (a space, "XXXX XXXX XXXX") is NOT sufficient: financial
+    # statements / annual reports are full of tabular numbers like "2024 1234 5678"
+    # (a year + two 4-digit cells) that match the spaced-Aadhaar regex, fail the
+    # Verhoeff checksum and were FALSELY flagged "fabricated Aadhaar" -> RED on
+    # genuine docs (benchmark: AR_ETERNAL annual report, real bank stmt). Real
+    # Aadhaar cards classify as doc_type=="aadhaar" and/or print the UIDAI/आधार
+    # label, so genuinely fabricated Aadhaar numbers are still caught.
     _AADHAAR_CTX = ("aadhaar", "aadhar", "uidai", "आधार", "uid no", "uid:")
     aadhaars_set = set()
     for m in AADHAAR_RE.finditer(text):
         raw = m.group(0)
         ctx = text[max(0, m.start() - 45):m.start()].lower()
-        if (" " in raw) or any(k in ctx for k in _AADHAAR_CTX):
+        if doc_type == "aadhaar" or any(k in ctx for k in _AADHAAR_CTX):
             aadhaars_set.add(re.sub(r"\s", "", raw))
     aadhaars = sorted(aadhaars_set)
     ifscs = sorted(set(IFSC_RE.findall(text)))
+    udyam = sorted({u.upper() for u in UDYAM_RE.findall(text)})
     amounts = sorted({_norm_amount(a) for a in AMOUNT_RE.findall(text)})
     dates = sorted(set(DATE_RE.findall(text)))
     itr_acks = sorted({m.group(1) for m in ACK_RE.finditer(text)})
@@ -172,6 +178,7 @@ def _regex_entities(text: str) -> dict[str, list[str]]:
         "gstin": gstins,
         "aadhaar": aadhaars,
         "ifsc": ifscs,
+        "udyam": udyam,
         "account_number": accounts,
         "amount": amounts,
         "date": dates,
@@ -211,7 +218,7 @@ def extract_entities(text: str, doc_type: str | None = None) -> dict[str, list[s
     """
     if not text or not text.strip():
         return {}
-    entities = _regex_entities(text)
+    entities = _regex_entities(text, doc_type)
     entities.update(_ner_entities(text))
 
     # MRZ (passport machine-readable zone): authoritative, deterministic source

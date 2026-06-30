@@ -73,3 +73,33 @@ class AuditLog(Base):
     # exact evidence later (signals, SHAP, entities, evidence report, heatmap URL).
     # Append-only like the rest of the row — never updated.
     report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class AnalystLabel(Base):
+    """Ground-truth verdict an analyst attaches to an analysed document — the
+    active-learning flywheel (improvement #2).
+
+    Distinct from the workflow decision (approved/rejected in cases.record_decision):
+    this is the ML ground truth — "is this document genuine or a forgery" — used to
+    grow a REAL-WORLD training set from production traffic. ml/training/
+    collect_labeled.py joins these rows to the persisted upload
+    (/data/uploads/{job_id}.*) and emits a labelled training manifest.
+
+    Append-only by policy (like AuditLog) — corrections are new rows; the
+    collection script takes the most recent label per job_id.
+    """
+
+    __tablename__ = "analyst_labels"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    audit_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    filename: Mapped[str] = mapped_column(String(512))
+    # analyst-confirmed TRUE document type (may differ from the model's prediction)
+    true_doc_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    label: Mapped[str] = mapped_column(String(16))           # "genuine" | "fraud"
+    fraud_vector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -178,7 +178,8 @@ async def get_case(case_id: str, session: AsyncSession = Depends(get_session)) -
     ]
 
     completed = [
-        {"filename": d.filename, "document_type": d.document_type, "entities": d.entities or {}}
+        {"filename": d.filename, "document_type": d.document_type,
+         "entities": d.entities or {}, "face": (d.result or {}).get("face")}
         for d in docs if d.status == "completed"
     ]
     consistency = None

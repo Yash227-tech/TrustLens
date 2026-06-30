@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-hin \
+    tesseract-ocr-guj \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
@@ -22,6 +23,15 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu121
 
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Cross-document face matching (photo-superimposition / mixed-identity detection).
+# --no-deps so it CANNOT disturb the pinned CUDA torch above; its runtime deps
+# (torch/torchvision/numpy/pillow/requests) are already installed.
+RUN pip install --no-cache-dir --no-deps facenet-pytorch==2.6.0
+
+# Bake the FaceNet (VGGFace2) weights into the image so face matching runs fully
+# OFFLINE with no first-use download. MTCNN's weights ship inside the package.
+RUN python -c "from facenet_pytorch import InceptionResnetV1; InceptionResnetV1(pretrained='vggface2'); print('vggface2 weights cached')"
 
 COPY app/ ./app/
 

@@ -47,6 +47,9 @@ REAL_PASSPORT_MANIFEST = DATA_ROOT / "raw" / "external" / "passport" / "labels_c
 # model read a genuine statement as profit_and_loss (13% on held-out real); these
 # teach the real layout (Roboflow bank-statement dataset, leak-free train split).
 REAL_BANKSTMT_MANIFEST = DATA_ROOT / "raw" / "external" / "Bankstatments" / "labels_classify.jsonl"
+# Real Delhi Jal Board water-bill images for the `utility_bill` class (address
+# proof). Single real template (DJB); synthetic adds gas/electricity variety.
+REAL_UTILITY_MANIFEST = DATA_ROOT / "raw" / "external" / "water_bill" / "labels_classify.jsonl"
 OUT_DIR = DATA_ROOT / "models" / "layoutlmv3-trustlens"
 MODEL_ID = "microsoft/layoutlmv3-base"
 RENDER_DPI = 150
@@ -100,9 +103,15 @@ def load_manifest() -> list[dict]:
         bs = _read_jsonl(REAL_BANKSTMT_MANIFEST)
         rows.extend(bs)
         n_bankstmt = len(bs)
+    n_utility = 0
+    if REAL_UTILITY_MANIFEST.exists():
+        ut = _read_jsonl(REAL_UTILITY_MANIFEST)
+        rows.extend(ut)
+        n_utility = len(ut)
     print(f"manifest: {n_syn} synthetic + {n_real} real-financial "
           f"+ {n_aadhaar} real-aadhaar + {n_pan} real-pan "
-          f"+ {n_passport} real-passport + {n_bankstmt} real-bankstmt = {len(rows)} docs")
+          f"+ {n_passport} real-passport + {n_bankstmt} real-bankstmt "
+          f"+ {n_utility} real-utility = {len(rows)} docs")
     return rows
 
 

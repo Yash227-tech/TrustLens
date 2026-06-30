@@ -20,6 +20,8 @@ import threading
 import jellyfish
 from rapidfuzz import fuzz
 
+from app.forensics.face_match import compare_faces
+
 logger = logging.getLogger(__name__)
 
 HARD_ID_FIELDS = ["pan", "gstin", "aadhaar", "ifsc", "passport"]
@@ -213,6 +215,49 @@ def analyze_case_consistency(documents: list[dict]) -> dict:
                 "detail": f"Cannot confirm same applicant: no readable identity "
                           f"(name or ID number) on {', '.join(unreadable)}. "
                           f"Manual identity verification required.",
+            })
+
+    # --- Faces: cross-document photo match (photo-superimposition / mixed identity) ---
+    # Per-doc face embeddings are produced by forensics/face_match for ID documents.
+    # Two ID photos that don't match => a swapped photo or two people's IDs combined
+    # -> review (YELLOW). Never auto-RED on its own: genuine same-person-different-
+    # photo pairs (different ages, low-res, B&W) have real spread, so a human
+    # verifies the portraits. A conflicting hard ID above is the deterministic RED.
+    face_docs: list[tuple[str, list]] = []
+    for d in documents:
+        if d.get("document_type") not in IDENTITY_DOC_TYPES:
+            continue
+        face = d.get("face") or {}
+        if face.get("quality") == "ok" and face.get("embedding"):
+            face_docs.append((_doc_label(d), face["embedding"]))
+    if len(face_docs) >= 2:
+        mismatches, matches = [], []
+        for i in range(len(face_docs)):
+            for j in range(i + 1, len(face_docs)):
+                (la, ea), (lb, eb) = face_docs[i], face_docs[j]
+                cmp = compare_faces(ea, eb)
+                if cmp["verdict"] == "mismatch":
+                    mismatches.append((la, lb, cmp["similarity"]))
+                elif cmp["verdict"] == "match":
+                    matches.append((la, lb, cmp["similarity"]))
+        if mismatches:
+            review_required = True
+            score -= 0.25
+            la, lb, sim = min(mismatches, key=lambda m: m[2])
+            findings.append({
+                "field": "FACE",
+                "severity": "warning",
+                "detail": f"Face photos differ across identity documents ({la} vs {lb}, "
+                          f"similarity {sim}). Possible photo substitution or mixed identity — "
+                          f"verify the portraits manually.",
+            })
+        elif matches:
+            la, lb, sim = max(matches, key=lambda m: m[2])
+            findings.append({
+                "field": "FACE",
+                "severity": "ok",
+                "detail": f"Face photos consistent across identity documents "
+                          f"(e.g. {la} vs {lb}, similarity {sim}).",
             })
 
     score = max(0.0, min(1.0, score))

@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 
 from app.forensics.aadhaar_fields import analyze_aadhaar_fields
+from app.forensics.face_match import extract_face_embedding
+from app.forensics.photo_forensics import analyze_photo_region
 from app.forensics.docx_metadata import analyze_docx_metadata
 from app.forensics.bank_statement import analyze_bank_statement
 from app.forensics.ela import analyze_ela
@@ -24,6 +26,8 @@ from app.services.document_classifier import classify as classify_document
 from app.services.entity_extraction import extract_entities
 from app.services.pan_card import analyze_pan_card
 from app.services.pan_fields import extract_pan_fields
+from app.services.utility_fields import extract_utility_fields
+from app.services.udyam_fields import extract_udyam_fields
 from app.services.evidence_report import generate_evidence_report
 from app.services.risk_scorer import score_from_signals
 from app.services.verification_service import analyze_cross_source
@@ -33,6 +37,10 @@ from app.storage import HEATMAP_BUCKET, put_object
 PDF_TYPE = "application/pdf"
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 IMAGE_TYPES = {"image/png", "image/jpeg"}
+
+# ID documents that carry a portrait — embed the face for the case-level
+# cross-document photo-match (photo-superimposition / mixed-identity detection).
+FACE_DOC_TYPES = {"aadhaar", "pan", "passport", "voter_id", "driving_license"}
 
 # Base weights per signal. Only the signals that actually apply to a given
 # document are included at scoring time, then normalised to sum to 1.0. This
@@ -344,6 +352,90 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
                 "PAN Field Detection", 1.0, True,
                 f"Located {pf['detected']} by sight; recovered fields: {recovered or 'none'}.")
 
+    # ------ Utility-bill field detector (address-proof extraction, not a forensic) ------
+    # A utility bill is the most common address proof. Locate the consumer NAME +
+    # ADDRESS by sight and recover them so the cross-document identity check (name)
+    # and address-proof (address) work even on noisy scans. Tamper detection stays
+    # with ManTraNet/ELA. AI/regex stay primary; this only fills gaps.
+    utility_extract_signal = None
+    if classification["doc_type"] == "utility_bill" and forensic_bytes is not None:
+        uf = extract_utility_fields(forensic_bytes, forensic_type)
+        if uf["detected"]:
+            if uf["name"]:
+                persons = entities.get("person", [])
+                if not any(uf["name"].strip().lower() == p.strip().lower() for p in persons):
+                    entities["person"] = sorted(set(persons) | {uf["name"]})
+            if uf["address"]:
+                addrs = entities.get("address", [])
+                if uf["address"] not in addrs:
+                    entities["address"] = sorted(set(addrs) | {uf["address"]})
+            recovered = {k: uf[k] for k in ("name", "address", "consumer_no", "date") if uf[k]}
+            utility_extract_signal = _signal(
+                "Utility Bill Field Detection", 1.0, True,
+                f"Located {uf['detected']} by sight; recovered: {recovered or 'none'}.")
+
+    # ------ Udyam (MSME) QR authentication (URN cross-check; verify via gov-mock) ------
+    # The Udyam cert's QR encodes the URN + verify URL. Decode it and cross-check
+    # against the printed URN: a QR/printed mismatch is a tamper indicator. The URN
+    # is recovered into entities so Cross-Source Verification checks it against the
+    # (mock) Udyam registry. QR-absent is informational only (scans drop it).
+    udyam_signal = None
+    if classification["doc_type"] == "udyam_certificate" and forensic_bytes is not None:
+        ud = extract_udyam_fields(forensic_bytes, forensic_type)
+        printed = set(entities.get("udyam", []))
+        if ud["qr_urn"]:
+            if ud["qr_urn"] not in printed:  # recover URN for verification if OCR missed it
+                entities["udyam"] = sorted(printed | {ud["qr_urn"]})
+            consistent = (not printed) or (ud["qr_urn"] in printed)
+            if consistent:
+                udyam_signal = _signal("Udyam QR Authentication", 1.0, True,
+                    f"QR decoded; URN {ud['qr_urn']} consistent with the certificate.")
+            else:
+                udyam_signal = _signal("Udyam QR Authentication", 0.5, False,
+                    f"QR URN {ud['qr_urn']} does NOT match the printed URN "
+                    f"{sorted(printed)} — possible tampering; verify manually.")
+        elif ud["qr_present"]:
+            udyam_signal = _signal("Udyam QR Authentication", 1.0, True,
+                "QR present but no URN decoded (informational).")
+        else:
+            udyam_signal = _signal("Udyam QR Authentication", 1.0, True,
+                "No QR detected (scans/prints often omit it); verification via printed URN.")
+
+    # ------ Single-document photo-region tamper (edited/superimposed photo) ------
+    # Catches a digitally edited / swapped photo on ONE ID card (where face-match,
+    # which needs 2 docs, can't help): intersect the ManTraNet forgery heatmap with
+    # the YOLO-located photo box. Genuine printed photos stay LOW in-box (unlike ELA);
+    # a spliced photo spikes. A confident, localized hit is a critical (RED).
+    photo_forensic = None
+    photo_signal = None
+    if forensic_bytes is not None and classification["doc_type"] in ("aadhaar", "pan"):
+        photo_forensic = analyze_photo_region(forensic_bytes, forensic_type, classification["doc_type"])
+        if photo_forensic.get("checked"):
+            photo_signal = _signal(
+                "Photo Region Forensics",
+                0.0 if photo_forensic["verdict"] == "tampered" else 1.0,
+                photo_forensic["verdict"] != "tampered", photo_forensic["detail"])
+
+    # ------ Face embedding for cross-document photo-match (identity) ------
+    # A swapped face photo (the #1 ID tamper) is invisible to ELA — a genuine face
+    # is naturally high-ELA. So we embed the portrait here; the case-level cross-doc
+    # check (cross_doc.py) compares it across the applicant's ID documents. This is
+    # purely informational per-document (a single photo can't be matched against
+    # anything yet); it never affects the single-doc trust score.
+    face_info = None
+    face_signal = None
+    if forensic_bytes is not None and classification["doc_type"] in FACE_DOC_TYPES:
+        fe = extract_face_embedding(forensic_bytes, forensic_type)
+        face_info = {"quality": fe["quality"], "prob": fe["prob"]}
+        if fe["embedding"] is not None:
+            face_info["embedding"] = fe["embedding"]
+        _q = {"ok": "captured", "low": "low-quality", "none": "not found",
+              "unavailable": "skipped (model unavailable)"}.get(fe["quality"], fe["quality"])
+        face_signal = _signal(
+            "Face Detection", 1.0, True,
+            f"Portrait {_q} (detector confidence {fe['prob']}); "
+            f"used for cross-document photo match at case level.")
+
     # ------ Cross-Source Verification (mock DigiLocker/AA/GSTN/ITR, spec §6) ------
     cs_result = analyze_cross_source(entities, classification["doc_type"])
     cs_signal = _signal(
@@ -399,6 +491,14 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
         signals.append(pan_signal)
     if pan_extract_signal is not None:
         signals.append(pan_extract_signal)
+    if utility_extract_signal is not None:
+        signals.append(utility_extract_signal)
+    if udyam_signal is not None:
+        signals.append(udyam_signal)
+    if photo_signal is not None:
+        signals.append(photo_signal)
+    if face_signal is not None:
+        signals.append(face_signal)
     signals.extend([ela_signal, mt_signal, cs_signal])
 
     # A scanned/photographed PDF (no usable text layer → had to be OCR'd) — pixel
@@ -439,6 +539,11 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
         pdf_result, docx_result, ela_result, mt_result, font_result, sig_result, stamp_result,
         bank_result, cs_result, aadhaar_result, is_scanned_pdf,
     )
+    # A confident, localized photo-region splice is photo substitution → RED (the
+    # ManTraNet whole-image average can dilute a small photo edit below its own
+    # threshold, so this localized check is what catches it).
+    if photo_forensic and photo_forensic.get("verdict") == "tampered":
+        criticals.append("Photo region manipulation — " + photo_forensic["detail"])
     if criticals and tier != "RED":
         tier, routing = "RED", "fraud_escalation"
 
@@ -473,6 +578,18 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
                      if s["score"] < 0.7 and s["name"] not in REVIEW_SIGNAL_NAMES]
         if not hard_fail:
             tier, routing = "YELLOW", "underwriter_review"
+
+    # Classifier disagreement (keyword vs a CONFIDENT LayoutLMv3) — surfaced as an
+    # informational review note for the underwriter (doc-type ambiguity / possible
+    # type-spoofing). Appended AFTER the tier is finalized so it is display-only and
+    # never changes the tier (bank-safe; classifier_agreement is False only when
+    # LayoutLMv3 is above its confidence floor and still disagrees).
+    if classification.get("classifier_agreement") is False:
+        review_indicators.append(
+            f"Classifier disagreement: keyword type '{classification['doc_type']}' vs "
+            f"visual model '{classification.get('ml_doc_type')}' "
+            f"({classification.get('ml_confidence', 0.0):.0%} conf) — verify document type (review)"
+        )
 
     summary_extras = ""
     if docx_signal is not None:
@@ -512,6 +629,7 @@ def run_full_analysis(content: bytes, content_type: str, filename: str) -> dict:
         "classifier_agreement": classification.get("classifier_agreement"),
         "ml_inconclusive": classification.get("ml_inconclusive", False),
         "entities": entities,
+        "face": face_info,
         "scorer": scorer_used,
         "shap_contributions": shap_contributions,
     }

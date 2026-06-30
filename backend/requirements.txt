@@ -37,3 +37,6 @@ datasets==5.0.0          # HuggingFace datasets — real ID-card training data (
 accelerate==1.1.1
 sentencepiece==0.2.0
 protobuf==5.28.3
+# facenet-pytorch==2.6.0 is installed in the Dockerfile with --no-deps (cross-document
+# face matching / photo-superimposition). Kept out of this resolved list so it cannot
+# perturb the pinned CUDA torch above; its deps are already satisfied here.

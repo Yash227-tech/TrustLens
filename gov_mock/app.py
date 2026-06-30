@@ -40,6 +40,13 @@ AA_ACCOUNTS = {
 ITR = {
     "112233445566778": {"name": "Rahul Verma", "assessment_year": "2024-25", "status": "filed"},
 }
+# Udyam (MSME) registry — keyed by Udyam Registration Number (URN). The
+# authoritative_name is the ENTERPRISE legal name (compared to the doc's org name).
+UDYAM = {
+    "UDYAM-MH-26-0123456": {"enterprise": "Patel Traders Private Limited",
+                            "enterprise_type": "Small", "status": "active",
+                            "major_activity": "TRADING"},
+}
 
 
 class DigiLockerReq(BaseModel):
@@ -58,6 +65,10 @@ class GSTNReq(BaseModel):
 class ITRReq(BaseModel):
     ack_number: str | None = None
     pan: str | None = None
+
+
+class UdyamReq(BaseModel):
+    urn: str | None = None
 
 
 @app.get("/health")
@@ -107,3 +118,15 @@ def itr(req: ITRReq):
                 "ack_number": req.ack_number, "authoritative_name": rec["name"],
                 "assessment_year": rec["assessment_year"], "status": rec["status"]}
     return {"source": "Income Tax e-Filing", "found": False}
+
+
+@app.post("/udyam/verify")
+def udyam(req: UdyamReq):
+    urn = (req.urn or "").upper()
+    if urn and urn in UDYAM:
+        rec = UDYAM[urn]
+        return {"source": "Udyam", "found": True, "urn": urn,
+                "authoritative_name": rec["enterprise"],
+                "enterprise_type": rec["enterprise_type"],
+                "major_activity": rec["major_activity"], "status": rec["status"]}
+    return {"source": "Udyam", "found": False}

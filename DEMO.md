@@ -110,13 +110,38 @@ Click **Audit**.
 
 ## If asked about accuracy / models (optional)
 
-- **LayoutLMv3** (doc classification) fine-tuned on RTX 4060 — 100% val (synthetic).
-- **YOLOv8** (stamp detection) — mAP50 0.995.
-- **XGBoost** (Trust Score) — 84% acc / 0.94 ROC-AUC on a **real + synthetic** mix
-  (CASIA 2.0 real tampering). SHAP gives per-document explainability.
-- **ManTraNet** — pretrained copy-move/splicing CNN from the original paper.
-- Be honest: synthetic-only metrics are optimistic; the XGBoost mixed-data figure
-  is the representative one, and real documents already score correctly (Demos 1–2).
+Full numbers in **`MODEL_CARD.md`**. Headlines (final version):
+
+- **LayoutLMv3** (doc classification, **26 doc types**) fine-tuned on RTX 4060 —
+  **99.3% val**, **97.9%** on a *real held-out* benchmark (240 typed docs).
+- **XGBoost** (Trust Score, 7 forensic features) — **88% acc / 0.95 ROC-AUC**,
+  **91.6% tamper-recall** on a **real + synthetic** mix (CASIA 2.0, payslip-forgery,
+  real IDs). SHAP gives per-document explainability.
+- **YOLOv8** detectors — stamps mAP50 **0.995**; Aadhaar 6-field mAP **0.93**; PAN
+  7-class; signatures; utility-bill fields.
+- **ManTraNet** — pretrained copy-move/splice CNN; on our masked Indian-doc tamper
+  set it localises forgeries at **pixel-AUC 0.76–0.88**.
+- **Photo-region forensics** (single-doc photo swap) — **96% recall / 0% false-positive**
+  on a 110-image swap set (ManTraNet ∩ the ID photo box).
+- **Face-match** across a case's IDs (FaceNet/MTCNN) — 96% genuine match, 78% impostor caught.
+- **System benchmark** (`data/benchmark.py`, 332 docs, genuine + 4 fraud vectors):
+  **98.6% fraud hard-catch**; genuine false-reject driven to ~0 on real documents
+  after the latest false-positive fixes.
+- Be honest: synthetic-only metrics are optimistic; the **real + benchmark** figures
+  above are the representative ones, and real documents already score correctly (Demos 1–2).
+
+## New since v1 (final-version capabilities)
+
+- **26 document types** (added rental/lease agreement, Udyam/MSME certificate with QR
+  verification, utility bills — water/gas/electricity).
+- **Photo-tamper + face-match**: catches a digitally swapped ID photo on a single card,
+  and a mixed-identity photo across a case's documents.
+- **Udyam QR authentication** + **bilingual OCR** (English + Hindi + Gujarati).
+- **Evaluation benchmark** — a labelled, reproducible system test (precision/recall/FPR,
+  per-fraud-vector recall, per-type confusion) that every model change is gated against.
+- **Active-learning flywheel** — an underwriter's *confirmed genuine/fraud* verdict is
+  captured (`POST /api/audit/{id}/label`) and turned into real training data, so the
+  model keeps improving from production.
 
 ## If asked "why local LLM / on-premise?"
 

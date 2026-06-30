@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 
 import fitz  # PyMuPDF
@@ -25,7 +26,10 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-OCR_LANGUAGES = "eng+hin"
+# eng + the two most common Indian utility-bill / KYC scripts (Hindi, Gujarati).
+# Override via env (e.g. add +tam, +ben) without a rebuild of the language packs
+# already baked into the image; revert to "eng" if a doc set is pure English.
+OCR_LANGUAGES = os.environ.get("OCR_LANGUAGES", "eng+hin+guj")
 PDF_TEXT_MIN_CHARS = 50  # If a PDF text layer yields less than this, treat as image-only.
 # Scanner apps (very common in India) stamp a boilerplate text layer on an
 # otherwise image-only scan — e.g. "Scanned by CamScanner". That watermark alone

@@ -216,6 +216,40 @@ def main():
                 print(f"  ! {p.name}: {e.__class__.__name__}")
         print(f"payslip: {len(genuine)} genuine, {len(forged)} forged")
 
+    # NOTE: the in-domain Indian-doc tamper set (build_tamper_set.py) is
+    # DELIBERATELY NOT added to this whole-image feature dataset. Measured
+    # 2026-06-29: those tampers are LOCALISED (a patched region / swapped photo
+    # box), so the whole-image ela/mantranet feature stays clean-ish and labelling
+    # them tampered DROPPED held-out tamper_recall 0.916 -> 0.878. They are caught
+    # by the LOCALISED detectors instead (photo_forensics, recalibrated to 96%
+    # recall / 0% FP; ManTraNet localisation pixel-AUC ~0.86) as critical
+    # indicators — complementary to, not part of, the whole-image scorer.
+    import json as _json
+
+    # --- Analyst-feedback real data (the #2 active-learning flywheel output).
+    # Empty until bankers label production docs; wired here so every rebuild
+    # automatically folds in confirmed real genuine/fraud examples. ---
+    FEEDBACK_MANIFEST = Path("/data/labeled/labels.jsonl")
+    if FEEDBACK_MANIFEST.exists():
+        n_fb = 0
+        for line in FEEDBACK_MANIFEST.read_text().splitlines():
+            if not line.strip():
+                continue
+            r = _json.loads(line)
+            p = Path("/data") / r["path"]
+            label = 1 if r["label"] == "fraud" else 0
+            try:
+                if p.suffix.lower() == ".pdf":
+                    feats = features_for_pdf(p.read_bytes())
+                else:
+                    ct = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+                    feats = features_for_image(p.read_bytes(), ct)
+                rows.append((feats, label, "analyst_feedback"))
+                n_fb += 1
+            except Exception as e:
+                print(f"  ! feedback {r.get('path')}: {e.__class__.__name__}")
+        print(f"analyst feedback: {n_fb}")
+
     # --- CASIA Au (label 0) + Tp (label 1) ---
     for folder, label, tag in [(CASIA_AU, 0, "casia_au"), (CASIA_TP, 1, "casia_tp")]:
         files = [f for f in folder.iterdir() if f.suffix.lower() in (".jpg", ".png", ".tif", ".bmp")]
